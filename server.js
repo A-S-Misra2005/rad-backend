@@ -58,7 +58,7 @@ app.get('/api/agora/token', (req, res) => {
     }
 
     // ---> PASTE YOUR NEW APP ID HERE <---
-    const appId = 'YOUR_NEW_APP_ID_HERE'; 
+    const appId = '365cef5a504441f39eda2fb0786a59ad'; 
     const appCertificate = process.env.AGORA_APP_CERTIFICATE;
 
     if (!appCertificate) {
