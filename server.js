@@ -52,6 +52,23 @@ const animalSchema = new mongoose.Schema({
 
 const Animal = mongoose.model('Animal', animalSchema);
 
+// --- HELPER FUNCTION FOR CLOUDINARY ---
+const getCloudinaryPublicId = (imageUrl) => {
+    if (!imageUrl) return null;
+    
+    // Split the URL at '/upload/'
+    const parts = imageUrl.split('/upload/');
+    if (parts.length !== 2) return null;
+
+    // Removes the version tag (e.g., 'v1701234567/')
+    const pathWithoutVersion = parts[1].substring(parts[1].indexOf('/') + 1);
+    
+    // Removes the file extension (e.g., '.jpg')
+    const publicId = pathWithoutVersion.substring(0, pathWithoutVersion.lastIndexOf('.'));
+    
+    return publicId;
+};
+
 // --- 5. API ENDPOINTS ---
 
 // CREATE: Upload Image and Save Data (Used by Field Worker)
@@ -98,12 +115,34 @@ app.get('/api/animals', async (req, res) => {
   }
 });
 
-// DELETE: Remove a Record (Used by Admin Dashboard)
+// DELETE: Remove a Record and its Cloudinary Image (Used by Admin Dashboard)
 app.delete('/api/animals/:id', async (req, res) => {
   try {
-    await Animal.findByIdAndDelete(req.params.id);
-    res.status(200).json({ message: 'Record deleted' });
+    const { id } = req.params;
+
+    // 1. Fetch the existing record to get the imageUrl
+    const animalRecord = await Animal.findById(id);
+    if (!animalRecord) {
+        return res.status(404).json({ message: 'Record not found in database.' });
+    }
+
+    // 2. Check for an image and delete it from Cloudinary
+    if (animalRecord.imageUrl) {
+        const publicId = getCloudinaryPublicId(animalRecord.imageUrl);
+        
+        if (publicId) {
+            // Destroy the image on Cloudinary
+            await cloudinary.uploader.destroy(publicId);
+            console.log(`Deleted Cloudinary image: ${publicId}`);
+        }
+    }
+
+    // 3. Delete the record from MongoDB
+    await Animal.findByIdAndDelete(id);
+
+    res.status(200).json({ message: 'Record and associated image successfully deleted' });
   } catch (error) {
+    console.error('Error deleting record:', error);
     res.status(500).json({ error: 'Failed to delete record' });
   }
 });
