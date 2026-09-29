@@ -6,7 +6,7 @@ const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const streamifier = require('streamifier');
 
-// NEW: Import Agora Token Builder
+// Import Agora Token Builder
 const { RtcTokenBuilder, RtcRole } = require('agora-access-token'); 
 
 const app = express();
@@ -50,15 +50,15 @@ const getCloudinaryPublicId = (imageUrl) => {
 
 // --- 5. API ENDPOINTS ---
 
-// NEW ENDPOINT: Generate Agora Token for Video Calls
+// GENERATE AGORA TOKEN FOR VIDEO CALLS
 app.get('/api/agora/token', (req, res) => {
     const channelName = req.query.channelName;
     if (!channelName) {
         return res.status(400).json({ error: 'channelName is required' });
     }
 
-    // Your App ID from MainActivity.kt
-    const appId = '48f1d2b3ef384f22abb38fc5b6785b57'; 
+    // ---> PASTE YOUR NEW APP ID HERE <---
+    const appId = 'YOUR_NEW_APP_ID_HERE'; 
     const appCertificate = process.env.AGORA_APP_CERTIFICATE;
 
     if (!appCertificate) {
