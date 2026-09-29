@@ -6,6 +6,9 @@ const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const streamifier = require('streamifier');
 
+// NEW: Import Agora Token Builder
+const { RtcTokenBuilder, RtcRole } = require('agora-access-token'); 
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -27,85 +30,79 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // 4. Define the Database Layout (Schema)
 const animalSchema = new mongoose.Schema({
-  ownerName: String,
-  contactNo: String,
-  address: String,
-  village: String,
-  postOffice: String,
-  dist: String,
-  animalNo: String,
-  breed: String,
-  sex: String,
-  dob: String,
-  vaxDate: String,
-  vaxName: String,
-  vaxMfg: String,
-  vaxExp: String,
-  vaxDose: String,
-  vaxRoute: String,
-  vaxNextDate: String,
-  vaxAdverse: String,
-  vaxDoneBy: String,
-  imageUrl: String,
-  timestamp: { type: Number, default: Date.now }
+  ownerName: String, contactNo: String, address: String, village: String,
+  postOffice: String, dist: String, animalNo: String, breed: String,
+  sex: String, dob: String, vaxDate: String, vaxName: String,
+  vaxMfg: String, vaxExp: String, vaxDose: String, vaxRoute: String,
+  vaxNextDate: String, vaxAdverse: String, vaxDoneBy: String,
+  imageUrl: String, timestamp: { type: Number, default: Date.now }
 });
-
 const Animal = mongoose.model('Animal', animalSchema);
 
-// --- HELPER FUNCTION FOR CLOUDINARY ---
+// Helper for Cloudinary Deletion
 const getCloudinaryPublicId = (imageUrl) => {
     if (!imageUrl) return null;
-    
-    // Split the URL at '/upload/'
     const parts = imageUrl.split('/upload/');
     if (parts.length !== 2) return null;
-
-    // Removes the version tag (e.g., 'v1701234567/')
     const pathWithoutVersion = parts[1].substring(parts[1].indexOf('/') + 1);
-    
-    // Removes the file extension (e.g., '.jpg')
-    const publicId = pathWithoutVersion.substring(0, pathWithoutVersion.lastIndexOf('.'));
-    
-    return publicId;
+    return pathWithoutVersion.substring(0, pathWithoutVersion.lastIndexOf('.'));
 };
 
 // --- 5. API ENDPOINTS ---
 
-// CREATE: Upload Image and Save Data (Used by Field Worker)
+// NEW ENDPOINT: Generate Agora Token for Video Calls
+app.get('/api/agora/token', (req, res) => {
+    const channelName = req.query.channelName;
+    if (!channelName) {
+        return res.status(400).json({ error: 'channelName is required' });
+    }
+
+    // Your App ID from MainActivity.kt
+    const appId = '48f1d2b3ef384f22abb38fc5b6785b57'; 
+    const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+
+    if (!appCertificate) {
+        return res.status(500).json({ error: 'Agora App Certificate is missing in .env' });
+    }
+
+    // Role Publisher since both Field Worker and Doctor stream video
+    const role = RtcRole.PUBLISHER; 
+    const uid = 0; // Matches uid = 0 in Android app
+    const expirationTimeInSeconds = 3600; // Token valid for 1 hour
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+
+    try {
+        const token = RtcTokenBuilder.buildTokenWithUid(appId, appCertificate, channelName, uid, role, privilegeExpiredTs);
+        return res.json({ token: token });
+    } catch (err) {
+        console.error('Error generating Agora token:', err);
+        return res.status(500).json({ error: 'Failed to generate token' });
+    }
+});
+
+// CREATE: Upload Image and Save Data 
 app.post('/api/animals', upload.single('image'), async (req, res) => {
   try {
     let imageUrl = '';
-
     if (req.file) {
-      // Upload the image directly to Cloudinary
       const uploadPromise = new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           { folder: 'rad_animals' },
-          (error, result) => {
-            if (result) resolve(result.secure_url);
-            else reject(error);
-          }
+          (error, result) => result ? resolve(result.secure_url) : reject(error)
         );
         streamifier.createReadStream(req.file.buffer).pipe(stream);
       });
       imageUrl = await uploadPromise;
     }
-
-    // Save everything to MongoDB
-    const newAnimal = new Animal({
-      ...req.body,
-      imageUrl: imageUrl
-    });
-
-    const savedAnimal = await newAnimal.save();
+    const savedAnimal = await new Animal({ ...req.body, imageUrl }).save();
     res.status(201).json(savedAnimal);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: 'Failed to save record' });
   }
 });
 
-// READ: Get All Records (Used by Admin Dashboard)
+// READ: Get All Records
 app.get('/api/animals', async (req, res) => {
   try {
     const animals = await Animal.find().sort({ timestamp: -1 });
@@ -115,34 +112,20 @@ app.get('/api/animals', async (req, res) => {
   }
 });
 
-// DELETE: Remove a Record and its Cloudinary Image (Used by Admin Dashboard)
+// DELETE: Remove a Record and Cloudinary Image
 app.delete('/api/animals/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
-    // 1. Fetch the existing record to get the imageUrl
     const animalRecord = await Animal.findById(id);
-    if (!animalRecord) {
-        return res.status(404).json({ message: 'Record not found in database.' });
-    }
+    if (!animalRecord) return res.status(404).json({ message: 'Record not found' });
 
-    // 2. Check for an image and delete it from Cloudinary
     if (animalRecord.imageUrl) {
         const publicId = getCloudinaryPublicId(animalRecord.imageUrl);
-        
-        if (publicId) {
-            // Destroy the image on Cloudinary
-            await cloudinary.uploader.destroy(publicId);
-            console.log(`Deleted Cloudinary image: ${publicId}`);
-        }
+        if (publicId) await cloudinary.uploader.destroy(publicId);
     }
-
-    // 3. Delete the record from MongoDB
     await Animal.findByIdAndDelete(id);
-
-    res.status(200).json({ message: 'Record and associated image successfully deleted' });
+    res.status(200).json({ message: 'Record deleted' });
   } catch (error) {
-    console.error('Error deleting record:', error);
     res.status(500).json({ error: 'Failed to delete record' });
   }
 });
